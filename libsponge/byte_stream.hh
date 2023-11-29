@@ -14,9 +14,7 @@ class ByteStream {
   private:
     // Your code here -- add private members as necessary.
     vector<char> buffer;  //!< Buffer for storing bytes
-    size_t head = 0, tail = 0, bytes_written_ = 0, bytes_read_ = 0;
-
-    pair<size_t, size_t> twoParts(size_t len) const;
+    size_t head = 0, tail = 0, bytes_written_ = 0, bytes_read_ = 0, buffer_size_ = 0;
 
     size_t copy_to_buffer(const string &data);
 

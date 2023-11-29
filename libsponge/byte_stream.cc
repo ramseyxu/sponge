@@ -1,4 +1,7 @@
 #include "byte_stream.hh"
+#include "cassert"
+#include "cstdio"
+#include <cstdarg>
 
 // Dummy implementation of a flow-controlled in-memory byte stream.
 
@@ -12,25 +15,32 @@ void DUMMY_CODE(Targs &&... /* unused */) {}
 
 using namespace std;
 
-ByteStream::ByteStream(const size_t capacity) { buffer.resize(capacity); }
+#define DEBUG__
 
-pair<size_t, size_t> ByteStream::twoParts(size_t len) const {
-    if (tail > head) {
-        return {min(len, tail - head), 0};
-    } else {
-        size_t firstPart = min(len, buffer.size() - head);
-        if (firstPart < len) {
-            return {firstPart, min(len - firstPart, tail)};
-        } else {
-            return {firstPart, 0};
-        }
-    }
+void debug_print(const char* format, ...) {
+#ifdef DEBUG__
+    va_list args;
+    va_start(args, format);
+    vprintf(format, args);
+    va_end(args);
+#endif
 }
 
+ByteStream::ByteStream(const size_t capacity) :
+buffer(vector<char>(capacity)){ debug_print("construct cap %lu\n", capacity); }
+
 size_t ByteStream::copy_to_buffer(const string &data) {
-    auto [firstPart, secondPart] = twoParts(data.size());
-    copy(data.begin(), data.begin() + firstPart, buffer.begin() + head);
+    if (remaining_capacity() == 0)
+        return 0;
+    if (tail < head) {
+        size_t copy_len = min(data.size(), head - tail);
+        copy(data.begin(), data.begin() + copy_len, buffer.begin() + tail);
+        return copy_len;
+    }
+    size_t firstPart = min(data.size(), buffer.size() - tail);
+    copy(data.begin(), data.begin() + firstPart, buffer.begin() + tail);
     if (firstPart < data.size()) {
+        size_t secondPart = min(head, data.size() - firstPart);
         copy(data.begin() + firstPart, data.begin() + firstPart + secondPart, buffer.begin());
         return firstPart + secondPart;
     }
@@ -38,12 +48,21 @@ size_t ByteStream::copy_to_buffer(const string &data) {
 }
 
 string ByteStream::copy_from_buffer(size_t len) const {
-    auto [firstPart, secondPart] = twoParts(len);
+    if (buffer_empty())
+        return "";
+    if (head < tail) {
+        size_t copy_len = min(len, tail - head);
+        return string(buffer.begin() + head, buffer.begin() + head + copy_len);
+    }
+    size_t firstPart = min(len, buffer.size() - head);
+    size_t secondPart = firstPart == len ? 0 : min(tail, len - firstPart);
     string ret(firstPart + secondPart, '\0');
     copy(buffer.begin() + head, buffer.begin() + head + firstPart, ret.begin());
     if (firstPart < len) {
         copy(buffer.begin(), buffer.begin() + secondPart, ret.begin() + firstPart);
     }
+    debug_print("copy from buffer len %lu head %lu tail %lu buffer %s ret %s\n",
+    len, head, tail, buffer.data(), ret.c_str());
     return ret;
 }
 
@@ -51,6 +70,10 @@ size_t ByteStream::write(const string &data) {
     size_t written_bytes = copy_to_buffer(data);
     tail = (tail + written_bytes) % buffer.size();
     bytes_written_ += written_bytes;
+    buffer_size_ += written_bytes;
+    assert(buffer_size_ <= buffer.size());
+    debug_print("after write %s\n, head %lu tail %lu buffer %s, written %lu\n"
+    , data.c_str(), head, tail, buffer.data(), written_bytes);
     return written_bytes;
 }
 
@@ -61,9 +84,14 @@ string ByteStream::peek_output(const size_t len) const {
 
 //! \param[in] len bytes will be removed from the output side of the buffer
 void ByteStream::pop_output(const size_t len) {
-    auto pop_len = min(len, buffer_size());
+    auto pop_len = min(len, buffer_size_);
     head = (head + pop_len) % buffer.size();
     bytes_read_ += pop_len;
+
+    printf("after pop head %lu tail %lu\n", head, tail);
+
+    assert(buffer_size_ >= pop_len);
+    buffer_size_ -= pop_len;
 }
 
 //! Read (i.e., copy and then pop) the next "len" bytes of the stream
@@ -79,9 +107,9 @@ void ByteStream::end_input() { input_ended_ = true; }
 
 bool ByteStream::input_ended() const { return input_ended_; }
 
-size_t ByteStream::buffer_size() const { return (tail + buffer.size() - head) % buffer.size(); }
+size_t ByteStream::buffer_size() const { return buffer_size_; }
 
-bool ByteStream::buffer_empty() const { return head == tail; }
+bool ByteStream::buffer_empty() const { return buffer_size_ == 0; }
 
 bool ByteStream::eof() const { return buffer_empty() && input_ended(); }
 
